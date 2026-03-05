@@ -1,0 +1,118 @@
+name: Manual Build Pumpkin (Multi-Platform)
+
+on:
+  workflow_dispatch:  # 仅手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            suffix: x86_64
+            rustflags: ""
+            linker: ""
+            pkgs: ""
+
+          - target: x86_64-unknown-linux-gnu
+            suffix: x86_64-legacy
+            rustflags: "-C target-cpu=core2"
+            linker: ""
+            pkgs: ""
+
+          - target: aarch64-unknown-linux-gnu
+            suffix: aarch64
+            rustflags: ""
+            linker: "aarch64-linux-gnu-gcc"
+            pkgs: "gcc-aarch64-linux-gnu"
+
+    steps:
+      - name: Checkout master branch
+        uses: actions/checkout@v4
+        with:
+          ref: master          # 关键：检出 master 分支
+          fetch-depth: 0
+
+      - name: Set build date and time
+        id: datetime
+        run: |
+          UTC_DATE=$(date -u +'%Y%m%d')
+          UTC_TIME=$(date -u +'%H%M')
+          BEIJING_TIME=$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M')
+          echo "utc_date=$UTC_DATE" >> $GITHUB_OUTPUT
+          echo "utc_time=$UTC_TIME" >> $GITHUB_OUTPUT
+          echo "beijing=$BEIJING_TIME" >> $GITHUB_OUTPUT
+
+      - name: Install cross compilation tools
+        if: matrix.pkgs != ''
+        run: sudo apt update && sudo apt install -y ${{ matrix.pkgs }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Configure linker for aarch64
+        if: matrix.linker != ''
+        run: |
+          mkdir -p ~/.cargo
+          echo "[target.${{ matrix.target }}]" >> ~/.cargo/config.toml
+          echo "linker = \"${{ matrix.linker }}\"" >> ~/.cargo/config.toml
+
+      - name: Build
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pumpkin-server-${{ matrix.suffix }}-${{ steps.datetime.outputs.utc_date }}
+          path: target/${{ matrix.target }}/release/pumpkin
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Get build timestamp
+        id: timestamp
+        run: |
+          UTC_DATE=$(date -u +'%Y%m%d')
+          UTC_TIME=$(date -u +'%H%M')
+          BEIJING_TIME=$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M')
+          echo "utc_date=$UTC_DATE" >> $GITHUB_OUTPUT
+          echo "utc_time=$UTC_TIME" >> $GITHUB_OUTPUT
+          echo "beijing=$BEIJING_TIME" >> $GITHUB_OUTPUT
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release_files
+          for dir in artifacts/pumpkin-server-*; do
+            if [ -f "$dir/pumpkin" ]; then
+              suffix=$(basename "$dir" | sed 's/^pumpkin-server-//')
+              cp "$dir/pumpkin" "release_files/pumpkin-$suffix"
+            fi
+          done
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: Manual-${{ steps.timestamp.outputs.utc_date }}-${{ steps.timestamp.outputs.utc_time }}
+          name: Manual Build ${{ steps.timestamp.outputs.utc_date }}-${{ steps.timestamp.outputs.utc_time }}
+          body: |
+            手动构建，提交：${{ github.sha }}
+            构建时间：${{ steps.timestamp.outputs.beijing }} UTC+8
+
+            下载链接（在 Release 附件中）：
+            - `pumpkin-x86_64-${{ steps.timestamp.outputs.utc_date }}` – 标准 x86_64 构建
+            - `pumpkin-x86_64-legacy-${{ steps.timestamp.outputs.utc_date }}` – 为旧 CPU 优化 (target-cpu=core2)
+            - `pumpkin-aarch64-${{ steps.timestamp.outputs.utc_date }}` – ARM64 Linux 构建
+          artifacts: "release_files/*"
+          allowUpdates: false
+          token: ${{ secrets.GITHUB_TOKEN }}
