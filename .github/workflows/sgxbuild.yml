@@ -6,7 +6,6 @@ on:
     - cron: '0 */2 * * *'   # 每 2 小时运行一次（UTC 时间）
 
 jobs:
-  # 同步上游，判断是否有更新（操作 master 分支）
   sync:
     runs-on: ubuntu-latest
     outputs:
@@ -16,7 +15,7 @@ jobs:
       - name: Checkout master branch
         uses: actions/checkout@v4
         with:
-          ref: master          # 关键：检出 master 分支
+          ref: master
           fetch-depth: 0
 
       - name: Add upstream and fetch
@@ -24,7 +23,7 @@ jobs:
           git remote add upstream https://github.com/Pumpkin-MC/Pumpkin.git
           git fetch upstream
 
-      - name: Check for updates (from master)
+      - name: Check for updates
         id: check
         run: |
           NEW_COMMITS_COUNT=$(git rev-list --count HEAD..upstream/master)
@@ -45,7 +44,6 @@ jobs:
           if [ -z "$COMMITS" ]; then
             COMMITS="（无详细提交信息，可能为合并提交）"
           fi
-          # Base64 编码
           ENCODED=$(echo "$COMMITS" | base64 -w 0)
           echo "commits_base64=$ENCODED" >> $GITHUB_OUTPUT
 
@@ -57,11 +55,11 @@ jobs:
           git merge upstream/master --no-edit --allow-unrelated-histories
           git push origin master
 
-  # 编译（仅当有更新时运行，仍然使用 master 代码）
   build:
     needs: sync
     if: needs.sync.outputs.has_updates == 'true'
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.continue-on-error }}   # 允许矩阵中特定条目失败
     strategy:
       matrix:
         include:
@@ -70,24 +68,35 @@ jobs:
             rustflags: ""
             linker: ""
             pkgs: ""
+            continue-on-error: false
 
           - target: x86_64-unknown-linux-gnu
             suffix: x86_64-legacy
             rustflags: "-C target-cpu=core2"
             linker: ""
             pkgs: ""
+            continue-on-error: false
 
           - target: aarch64-unknown-linux-gnu
             suffix: aarch64
             rustflags: ""
             linker: "aarch64-linux-gnu-gcc"
             pkgs: "gcc-aarch64-linux-gnu"
+            continue-on-error: false
+
+          # 新增 LoongArch 目标（实验性，允许失败）
+          - target: loongarch64-unknown-linux-gnu
+            suffix: loongarch64
+            rustflags: ""
+            linker: "loongarch64-linux-gnu-gcc"
+            pkgs: "gcc-loongarch64-linux-gnu"
+            continue-on-error: true
 
     steps:
       - name: Checkout master branch
         uses: actions/checkout@v4
         with:
-          ref: master          # 关键：检出 master 分支
+          ref: master
 
       - name: Set build date and time
         id: datetime
@@ -101,14 +110,17 @@ jobs:
 
       - name: Install cross compilation tools
         if: matrix.pkgs != ''
-        run: sudo apt update && sudo apt install -y ${{ matrix.pkgs }}
+        run: |
+          sudo apt update
+          sudo apt install -y ${{ matrix.pkgs }}
+          # 如果包不存在，安装步骤会失败，但 LoongArch 允许失败，其他不允许
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Configure linker for aarch64
+      - name: Configure linker
         if: matrix.linker != ''
         run: |
           mkdir -p ~/.cargo
@@ -126,7 +138,6 @@ jobs:
           name: pumpkin-server-${{ matrix.suffix }}-${{ steps.datetime.outputs.utc_date }}
           path: target/${{ matrix.target }}/release/pumpkin
 
-  # 统一发布 Release（仅当有更新时运行）
   release:
     needs: build
     if: needs.sync.outputs.has_updates == 'true'
@@ -193,6 +204,7 @@ jobs:
             - `pumpkin-x86_64-${{ steps.timestamp.outputs.utc_date }}` – 标准 x86_64 构建
             - `pumpkin-x86_64-legacy-${{ steps.timestamp.outputs.utc_date }}` – 为旧 CPU 优化 (target-cpu=core2)
             - `pumpkin-aarch64-${{ steps.timestamp.outputs.utc_date }}` – ARM64 Linux 构建
+            - `pumpkin-loongarch64-${{ steps.timestamp.outputs.utc_date }}` – LoongArch64 Linux 构建（实验性）
           artifacts: "release_files/*"
           allowUpdates: false
           token: ${{ secrets.GITHUB_TOKEN }}
