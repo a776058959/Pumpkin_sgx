@@ -104,7 +104,7 @@ jobs:
             suffix: loongarch64
             rustflags: ""
             linker: "loongarch64-linux-gnu-gcc"
-            pkgs: "gcc-loongarch64-linux-gnu"
+            pkgs: ""   # 不使用 apt 安装，手动下载
             continue-on-error: true
 
     steps:
@@ -125,11 +125,35 @@ jobs:
           echo "utc_time=$UTC_TIME" >> $GITHUB_OUTPUT
           echo "beijing=$BEIJING_TIME" >> $GITHUB_OUTPUT
 
-      - name: Install cross compilation tools
+      # 安装非 LoongArch 的交叉编译工具（使用 apt）
+      - name: Install cross compilation tools (non-loongarch)
         if: matrix.pkgs != ''
         run: |
           sudo apt update
           sudo apt install -y ${{ matrix.pkgs }}
+
+      # LoongArch 专用工具链下载（请替换实际下载链接）
+      - name: Download and extract LoongArch toolchain
+        if: matrix.target == 'loongarch64-unknown-linux-gnu'
+        run: |
+          # TODO: 替换为从龙芯官网获取的实际下载链接
+          DOWNLOAD_URL="https://github.com/loongson/build-tools/releases/download/2025.08.08/x86_64-cross-tools-loongarch64-binutils_2.45-gcc_15.1.0-glibc_2.42.tar.xz"
+          FILENAME="loongarch64-toolchain.tar.xz"
+          echo "⬇️ 下载 LoongArch 工具链..."
+          wget -q --show-progress $DOWNLOAD_URL -O $FILENAME
+          echo "📦 解压工具链..."
+          sudo tar -xf $FILENAME -C /opt
+          # 查找解压后的目录（假设目录名包含 loongarch64-gcc）
+          TOOLCHAIN_DIR=$(find /opt -maxdepth 1 -type d -name "loongarch64-gcc-*" | head -n1)
+          if [ -z "$TOOLCHAIN_DIR" ]; then
+            echo "❌ 未找到解压后的工具链目录"
+            exit 1
+          fi
+          echo "TOOLCHAIN_DIR=$TOOLCHAIN_DIR" >> $GITHUB_ENV
+          echo "$TOOLCHAIN_DIR/bin" >> $GITHUB_PATH
+          echo "✅ LoongArch 工具链已安装到 $TOOLCHAIN_DIR"
+          # 验证编译器
+          $TOOLCHAIN_DIR/bin/loongarch64-linux-gnu-gcc --version
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -140,8 +164,14 @@ jobs:
         if: matrix.linker != ''
         run: |
           mkdir -p ~/.cargo
+          if [ "${{ matrix.target }}" == "loongarch64-unknown-linux-gnu" ]; then
+            # 使用手动下载的工具链路径
+            LINKER_PATH="$TOOLCHAIN_DIR/bin/${{ matrix.linker }}"
+          else
+            LINKER_PATH="${{ matrix.linker }}"
+          fi
           echo "[target.${{ matrix.target }}]" >> ~/.cargo/config.toml
-          echo "linker = \"${{ matrix.linker }}\"" >> ~/.cargo/config.toml
+          echo "linker = \"$LINKER_PATH\"" >> ~/.cargo/config.toml
 
       - name: Build
         env:
