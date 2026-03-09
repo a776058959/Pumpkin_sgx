@@ -5,7 +5,7 @@ on:
   schedule:
     - cron: '0 */2 * * *'   # 每 2 小时运行一次（UTC 时间）
 
-# 添加权限
+# 全局权限（可选，但 PAT 已提供所需权限）
 permissions: write-all
 
 jobs:
@@ -52,17 +52,19 @@ jobs:
 
       - name: Merge upstream changes into master
         if: steps.check.outputs.has_updates == 'true'
+        env:
+          PAT: ${{ secrets.PAT }}   # 引用你添加的 PAT
         run: |
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
           git merge upstream/master --no-edit --allow-unrelated-histories
-          git push origin master
+          git push https://a776058959:$PAT@github.com/a776058959/Pumpkin_sgx.git master
 
   build:
     needs: sync
     if: needs.sync.outputs.has_updates == 'true'
     runs-on: ubuntu-latest
-    continue-on-error: ${{ matrix.continue-on-error }}   # 允许矩阵中特定条目失败
+    continue-on-error: ${{ matrix.continue-on-error }}
     strategy:
       matrix:
         include:
@@ -87,7 +89,6 @@ jobs:
             pkgs: "gcc-aarch64-linux-gnu"
             continue-on-error: false
 
-          # 新增 LoongArch 目标（实验性，允许失败）
           - target: loongarch64-unknown-linux-gnu
             suffix: loongarch64
             rustflags: ""
@@ -116,7 +117,6 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y ${{ matrix.pkgs }}
-          # 如果包不存在，安装步骤会失败，但 LoongArch 允许失败，其他不允许
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
