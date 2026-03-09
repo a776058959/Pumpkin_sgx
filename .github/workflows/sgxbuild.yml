@@ -5,7 +5,6 @@ on:
   schedule:
     - cron: '0 */2 * * *'   # 每 2 小时运行一次（UTC 时间）
 
-# 全局权限（可选，但 PAT 已提供所需权限）
 permissions: write-all
 
 jobs:
@@ -50,15 +49,28 @@ jobs:
           ENCODED=$(echo "$COMMITS" | base64 -w 0)
           echo "commits_base64=$ENCODED" >> $GITHUB_OUTPUT
 
+      # 调试：确认 PAT 是否已设置（仅输出长度，不泄露内容）
+      - name: Debug PAT existence
+        env:
+          PAT: ${{ secrets.PAT }}
+        run: |
+          if [ -n "$PAT" ]; then
+            echo "✅ PAT 已设置，长度为 ${#PAT}"
+          else
+            echo "❌ PAT 未设置或为空！"
+          fi
+
       - name: Merge upstream changes into master
         if: steps.check.outputs.has_updates == 'true'
         env:
-          PAT: ${{ secrets.PAT }}   # 引用你添加的 PAT
+          PAT: ${{ secrets.PAT }}
         run: |
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
           git merge upstream/master --no-edit --allow-unrelated-histories
-          git push https://a776058959:$PAT@github.com/a776058959/Pumpkin_sgx.git master
+          # 设置远程 URL 使用 PAT 进行身份验证
+          git remote set-url origin https://a776058959:$PAT@github.com/a776058959/Pumpkin_sgx.git
+          git push origin master
 
   build:
     needs: sync
