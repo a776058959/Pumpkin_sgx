@@ -49,7 +49,7 @@ jobs:
           ENCODED=$(echo "$COMMITS" | base64 -w 0)
           echo "commits_base64=$ENCODED" >> $GITHUB_OUTPUT
 
-      # 调试：确认 PAT 是否已设置（仅输出长度，不泄露内容）
+      # 调试：确认 PAT 是否已设置
       - name: Debug PAT existence
         env:
           PAT: ${{ secrets.PAT }}
@@ -68,9 +68,10 @@ jobs:
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
           git merge upstream/master --no-edit --allow-unrelated-histories
-          # 设置远程 URL 使用 PAT 进行身份验证
-          git remote set-url origin https://a776058959:$PAT@github.com/a776058959/Pumpkin_sgx.git
-          git push origin master
+          # 清除 credential helper 避免使用缓存的 GITHUB_TOKEN
+          git config --unset-all credential.helper || true
+          # 直接使用带 PAT 的 URL 推送（注意替换用户名为你的实际用户名）
+          git push https://a776058959:$PAT@github.com/a776058959/Pumpkin_sgx.git master
 
   build:
     needs: sync
