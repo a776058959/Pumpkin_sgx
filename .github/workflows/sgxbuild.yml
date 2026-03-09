@@ -5,10 +5,8 @@ on:
   schedule:
     - cron: '0 */2 * * *'   # 每 2 小时运行一次（UTC 时间）
 
-# 添加 actions: write 权限
-permissions:
-  contents: write
-  actions: write
+# 添加权限
+permissions: write-all
 
 jobs:
   sync:
