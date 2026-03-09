@@ -5,6 +5,11 @@ on:
   schedule:
     - cron: '0 */2 * * *'   # 每 2 小时运行一次（UTC 时间）
 
+# 添加所需权限
+permissions:
+  contents: write
+  workflows: write
+
 jobs:
   sync:
     runs-on: ubuntu-latest
