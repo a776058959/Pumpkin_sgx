@@ -5,10 +5,10 @@ on:
   schedule:
     - cron: '0 */2 * * *'   # 每 2 小时运行一次（UTC 时间）
 
-# 添加所需权限
+# 添加 actions: write 权限
 permissions:
   contents: write
-  workflows: write
+  actions: write
 
 jobs:
   sync:
