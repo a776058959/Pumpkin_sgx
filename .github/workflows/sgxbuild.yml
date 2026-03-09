@@ -100,11 +100,10 @@ jobs:
             pkgs: "gcc-aarch64-linux-gnu"
             continue-on-error: false
 
-          # LoongArch 实验性支持（允许失败）
           - target: loongarch64-unknown-linux-gnu
             suffix: loongarch64
             rustflags: ""
-            linker: "loongarch64-unknown-linux-gnu-gcc"   # 根据工具链实际文件名设置
+            linker: "loongarch64-unknown-linux-gnu-gcc"
             pkgs: ""
             continue-on-error: true
 
@@ -126,18 +125,15 @@ jobs:
           echo "utc_time=$UTC_TIME" >> $GITHUB_OUTPUT
           echo "beijing=$BEIJING_TIME" >> $GITHUB_OUTPUT
 
-      # 安装非 LoongArch 交叉编译工具（使用 apt）
       - name: Install cross compilation tools (non-loongarch)
         if: matrix.pkgs != ''
         run: |
           sudo apt update
           sudo apt install -y ${{ matrix.pkgs }}
 
-      # LoongArch 专用工具链手动下载（请替换 DOWNLOAD_URL 为实际链接）
       - name: Download and extract LoongArch toolchain
         if: matrix.target == 'loongarch64-unknown-linux-gnu'
         run: |
-          # TODO: 替换为从 https://github.com/loongson/build-tools/releases 获取的 Linux 版本链接
           DOWNLOAD_URL="https://github.com/loongson/build-tools/releases/download/2025.08.08/x86_64-cross-tools-loongarch64-binutils_2.45-gcc_15.1.0-glibc_2.42.tar.xz"
           FILENAME="loongarch64-toolchain.tar.xz"
           TOOLCHAIN_DIR="/opt/loongarch64-toolchain"
@@ -146,7 +142,6 @@ jobs:
           echo "📦 解压工具链到 $TOOLCHAIN_DIR ..."
           sudo mkdir -p $TOOLCHAIN_DIR
           sudo tar -xf $FILENAME -C $TOOLCHAIN_DIR --strip-components=0
-          # 查找 bin 目录（可能位于 $TOOLCHAIN_DIR/bin 或 $TOOLCHAIN_DIR/cross-tools/bin）
           if [ -d "$TOOLCHAIN_DIR/bin" ]; then
             BIN_DIR="$TOOLCHAIN_DIR/bin"
           elif [ -d "$TOOLCHAIN_DIR/cross-tools/bin" ]; then
@@ -158,15 +153,12 @@ jobs:
           echo "BIN_DIR=$BIN_DIR" >> $GITHUB_ENV
           echo "$BIN_DIR" >> $GITHUB_PATH
           echo "✅ LoongArch 工具链已安装，bin 目录为 $BIN_DIR"
-          echo "📁 bin 目录内容（前20行）："
           ls -l $BIN_DIR | head -20
-          # 验证编译器
           COMPILER_NAME="loongarch64-unknown-linux-gnu-gcc"
           if [ -f "$BIN_DIR/$COMPILER_NAME" ]; then
             $BIN_DIR/$COMPILER_NAME --version
           else
-            echo "⚠️ 未找到编译器 $COMPILER_NAME，请检查文件名"
-            # 继续运行，由 continue-on-error 处理
+            echo "⚠️ 未找到编译器 $COMPILER_NAME"
           fi
 
       - name: Install Rust
@@ -198,7 +190,7 @@ jobs:
           path: target/${{ matrix.target }}/release/pumpkin
 
   release:
-    needs: build
+    needs: [build, sync]               # 修改点：同时依赖 build 和 sync
     if: needs.sync.outputs.has_updates == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -213,7 +205,7 @@ jobs:
       - name: Decode upstream commits
         id: decode_commits
         run: |
-          ENCODED="${{ needs.sync.outputs.commits_base64 }}"
+          ENCODED="${{ needs.sync.outputs.commits_base64 }}"   # 修改点：正确引用 sync 的输出
           if [ -n "$ENCODED" ]; then
             DECODED=$(echo "$ENCODED" | base64 -d)
             echo "📌 解码后的提交列表："
