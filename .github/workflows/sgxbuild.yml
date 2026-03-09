@@ -100,11 +100,12 @@ jobs:
             pkgs: "gcc-aarch64-linux-gnu"
             continue-on-error: false
 
+          # LoongArch 实验性支持（允许失败）
           - target: loongarch64-unknown-linux-gnu
             suffix: loongarch64
             rustflags: ""
-            linker: "loongarch64-linux-gnu-gcc"
-            pkgs: ""   # 不使用 apt 安装，手动下载
+            linker: "loongarch64-unknown-linux-gnu-gcc"   # 根据工具链实际文件名设置
+            pkgs: ""
             continue-on-error: true
 
     steps:
@@ -125,35 +126,48 @@ jobs:
           echo "utc_time=$UTC_TIME" >> $GITHUB_OUTPUT
           echo "beijing=$BEIJING_TIME" >> $GITHUB_OUTPUT
 
-      # 安装非 LoongArch 的交叉编译工具（使用 apt）
+      # 安装非 LoongArch 交叉编译工具（使用 apt）
       - name: Install cross compilation tools (non-loongarch)
         if: matrix.pkgs != ''
         run: |
           sudo apt update
           sudo apt install -y ${{ matrix.pkgs }}
 
-      # LoongArch 专用工具链下载（请替换实际下载链接）
+      # LoongArch 专用工具链手动下载（请替换 DOWNLOAD_URL 为实际链接）
       - name: Download and extract LoongArch toolchain
         if: matrix.target == 'loongarch64-unknown-linux-gnu'
         run: |
-          # TODO: 替换为从龙芯官网获取的实际下载链接
+          # TODO: 替换为从 https://github.com/loongson/build-tools/releases 获取的 Linux 版本链接
           DOWNLOAD_URL="https://github.com/loongson/build-tools/releases/download/2025.08.08/x86_64-cross-tools-loongarch64-binutils_2.45-gcc_15.1.0-glibc_2.42.tar.xz"
           FILENAME="loongarch64-toolchain.tar.xz"
+          TOOLCHAIN_DIR="/opt/loongarch64-toolchain"
           echo "⬇️ 下载 LoongArch 工具链..."
           wget -q --show-progress $DOWNLOAD_URL -O $FILENAME
-          echo "📦 解压工具链..."
-          sudo tar -xf $FILENAME -C /opt
-          # 查找解压后的目录（假设目录名包含 loongarch64-gcc）
-          TOOLCHAIN_DIR=$(find /opt -maxdepth 1 -type d -name "loongarch64-gcc-*" | head -n1)
-          if [ -z "$TOOLCHAIN_DIR" ]; then
-            echo "❌ 未找到解压后的工具链目录"
+          echo "📦 解压工具链到 $TOOLCHAIN_DIR ..."
+          sudo mkdir -p $TOOLCHAIN_DIR
+          sudo tar -xf $FILENAME -C $TOOLCHAIN_DIR --strip-components=0
+          # 查找 bin 目录（可能位于 $TOOLCHAIN_DIR/bin 或 $TOOLCHAIN_DIR/cross-tools/bin）
+          if [ -d "$TOOLCHAIN_DIR/bin" ]; then
+            BIN_DIR="$TOOLCHAIN_DIR/bin"
+          elif [ -d "$TOOLCHAIN_DIR/cross-tools/bin" ]; then
+            BIN_DIR="$TOOLCHAIN_DIR/cross-tools/bin"
+          else
+            echo "❌ 未找到 bin 目录"
             exit 1
           fi
-          echo "TOOLCHAIN_DIR=$TOOLCHAIN_DIR" >> $GITHUB_ENV
-          echo "$TOOLCHAIN_DIR/bin" >> $GITHUB_PATH
-          echo "✅ LoongArch 工具链已安装到 $TOOLCHAIN_DIR"
+          echo "BIN_DIR=$BIN_DIR" >> $GITHUB_ENV
+          echo "$BIN_DIR" >> $GITHUB_PATH
+          echo "✅ LoongArch 工具链已安装，bin 目录为 $BIN_DIR"
+          echo "📁 bin 目录内容（前20行）："
+          ls -l $BIN_DIR | head -20
           # 验证编译器
-          $TOOLCHAIN_DIR/bin/loongarch64-linux-gnu-gcc --version
+          COMPILER_NAME="loongarch64-unknown-linux-gnu-gcc"
+          if [ -f "$BIN_DIR/$COMPILER_NAME" ]; then
+            $BIN_DIR/$COMPILER_NAME --version
+          else
+            echo "⚠️ 未找到编译器 $COMPILER_NAME，请检查文件名"
+            # 继续运行，由 continue-on-error 处理
+          fi
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -165,8 +179,7 @@ jobs:
         run: |
           mkdir -p ~/.cargo
           if [ "${{ matrix.target }}" == "loongarch64-unknown-linux-gnu" ]; then
-            # 使用手动下载的工具链路径
-            LINKER_PATH="$TOOLCHAIN_DIR/bin/${{ matrix.linker }}"
+            LINKER_PATH="$BIN_DIR/${{ matrix.linker }}"
           else
             LINKER_PATH="${{ matrix.linker }}"
           fi
