@@ -16,7 +16,7 @@ pub struct CSetTitle {
 
 impl CSetTitle {
     #[must_use]
-    pub fn new(
+    pub const fn new(
         action_type: i32,
         text: String,
         fade_in_duration: i32,
