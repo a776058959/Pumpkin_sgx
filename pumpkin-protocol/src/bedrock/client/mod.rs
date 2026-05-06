@@ -25,4 +25,4 @@ pub mod set_time;
 pub mod set_title;
 pub mod start_game;
 pub mod update_abilities;
-pub mod update_artributes;
+pub mod update_attributes;

@@ -80,7 +80,7 @@ use pumpkin_protocol::{
             creative_content::{CreativeContent, Group},
             gamerules_changed::GameRules,
             start_game::{Experiments, GamePublishSetting, LevelSettings},
-            update_artributes::{Attribute, CUpdateAttributes},
+            update_attributes::{Attribute, CUpdateAttributes},
         },
         network_item::NetworkItemDescriptor,
         server::text::SText,
