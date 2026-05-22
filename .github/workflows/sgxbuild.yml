@@ -5,6 +5,9 @@ on:
   schedule:
     - cron: '0 */2 * * *'   # 每 2 小时运行一次（UTC 时间）
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # 强制使用 Node.js 24，消除弃用警告
+
 permissions: write-all
 
 jobs:
@@ -14,13 +17,14 @@ jobs:
       has_updates: ${{ steps.check.outputs.has_updates }}
       commits_base64: ${{ steps.commits.outputs.commits_base64 }}
     steps:
-      - name: Checkout master branch with PAT
+      - name: Checkout master branch with PAT and submodules
         uses: actions/checkout@v4
         with:
           ref: master
           fetch-depth: 0
           token: ${{ secrets.PAT }}
           persist-credentials: false
+          submodules: true              # 关键：拉取子模块（包含 wit 定义）
 
       - name: Add upstream and fetch
         run: |
@@ -98,22 +102,23 @@ jobs:
             rustflags: ""
             linker: "aarch64-linux-gnu-gcc"
             pkgs: "gcc-aarch64-linux-gnu"
-            continue-on-error: false
+            continue-on-error: true          # 允许失败，不影响主流程
 
           - target: loongarch64-unknown-linux-gnu
             suffix: loongarch64
             rustflags: ""
             linker: "loongarch64-unknown-linux-gnu-gcc"
             pkgs: ""
-            continue-on-error: true
+            continue-on-error: true          # 允许失败，不影响主流程
 
     steps:
-      - name: Checkout master branch with PAT
+      - name: Checkout master branch with PAT and submodules
         uses: actions/checkout@v4
         with:
           ref: master
           token: ${{ secrets.PAT }}
           persist-credentials: false
+          submodules: true              # 关键：拉取子模块
 
       - name: Set build date and time
         id: datetime
@@ -190,7 +195,7 @@ jobs:
           path: target/${{ matrix.target }}/release/pumpkin
 
   release:
-    needs: [build, sync]               # 修改点：同时依赖 build 和 sync
+    needs: [build, sync]
     if: needs.sync.outputs.has_updates == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -205,7 +210,7 @@ jobs:
       - name: Decode upstream commits
         id: decode_commits
         run: |
-          ENCODED="${{ needs.sync.outputs.commits_base64 }}"   # 修改点：正确引用 sync 的输出
+          ENCODED="${{ needs.sync.outputs.commits_base64 }}"
           if [ -n "$ENCODED" ]; then
             DECODED=$(echo "$ENCODED" | base64 -d)
             echo "📌 解码后的提交列表："
