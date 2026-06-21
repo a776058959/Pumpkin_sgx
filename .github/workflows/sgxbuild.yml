@@ -24,7 +24,7 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.PAT }}
           persist-credentials: false
-          submodules: true              # 关键：拉取子模块（包含 wit 定义）
+          submodules: true
 
       - name: Add upstream and fetch
         run: |
@@ -102,14 +102,14 @@ jobs:
             rustflags: ""
             linker: "aarch64-linux-gnu-gcc"
             pkgs: "gcc-aarch64-linux-gnu"
-            continue-on-error: true          # 允许失败，不影响主流程
+            continue-on-error: true
 
           - target: loongarch64-unknown-linux-gnu
             suffix: loongarch64
             rustflags: ""
             linker: "loongarch64-unknown-linux-gnu-gcc"
             pkgs: ""
-            continue-on-error: true          # 允许失败，不影响主流程
+            continue-on-error: true
 
     steps:
       - name: Checkout master branch with PAT and submodules
@@ -118,7 +118,7 @@ jobs:
           ref: master
           token: ${{ secrets.PAT }}
           persist-credentials: false
-          submodules: true              # 关键：拉取子模块
+          submodules: true
 
       - name: Set build date and time
         id: datetime
@@ -265,17 +265,15 @@ jobs:
           allowUpdates: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
-    # 新增：清理旧 Release 及其对应的 Git tag（保留最近 10 个）
-    - name: Clean up old releases and tags
-      if: success()
-      run: |
-        KEEP=10   # 保留数量，可按需修改
-        echo "🧹 开始清理旧 Release 和对应的 Git tag，保留最近 ${KEEP} 个..."
-        # 获取所有 Release 的 tag 和创建时间，按时间排序，取第 KEEP+1 个及以后的 tag
-        gh release list --limit 100 --json tagName,createdAt --jq "sort_by(.createdAt) | reverse | .[${KEEP}:].tagName" | while read tag; do
-          echo "🗑️ 删除 Release: $tag （同时删除对应的 Git tag）"
-          gh release delete "$tag" --yes --cleanup-tag
-        done
-        echo "✅ 清理完成。"
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Clean up old releases and tags
+        if: success()
+        run: |
+          KEEP=10
+          echo "🧹 开始清理旧 Release 和对应的 Git tag，保留最近 ${KEEP} 个..."
+          gh release list --limit 100 --json tagName,createdAt --jq "sort_by(.createdAt) | reverse | .[${KEEP}:].tagName" | while read tag; do
+            echo "🗑️ 删除 Release: $tag （同时删除对应的 Git tag）"
+            gh release delete "$tag" --yes --cleanup-tag
+          done
+          echo "✅ 清理完成。"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
