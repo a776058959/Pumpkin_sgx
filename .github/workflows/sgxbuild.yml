@@ -277,3 +277,4 @@ jobs:
           echo "✅ 清理完成。"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: a776058959/Pumpkin_sgx   # 修复：显式指定仓库
