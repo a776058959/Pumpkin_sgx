@@ -78,36 +78,67 @@ jobs:
   build:
     needs: sync
     if: needs.sync.outputs.has_updates == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.continue-on-error }}
     strategy:
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
-            suffix: x86_64
+          # Linux 平台
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            suffix: linux-x86_64
             rustflags: ""
             linker: ""
             pkgs: ""
             continue-on-error: false
 
-          - target: x86_64-unknown-linux-gnu
-            suffix: x86_64-legacy
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            suffix: linux-x86_64-legacy
             rustflags: "-C target-cpu=core2"
             linker: ""
             pkgs: ""
             continue-on-error: false
 
-          - target: aarch64-unknown-linux-gnu
-            suffix: aarch64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            suffix: linux-aarch64
             rustflags: ""
             linker: "aarch64-linux-gnu-gcc"
             pkgs: "gcc-aarch64-linux-gnu"
             continue-on-error: true
 
-          - target: loongarch64-unknown-linux-gnu
-            suffix: loongarch64
+          - os: ubuntu-latest
+            target: loongarch64-unknown-linux-gnu
+            suffix: linux-loongarch64
             rustflags: ""
             linker: "loongarch64-unknown-linux-gnu-gcc"
+            pkgs: ""
+            continue-on-error: true
+
+          # Windows x86_64 平台
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            suffix: windows-x86_64
+            rustflags: ""
+            linker: ""
+            pkgs: ""
+            continue-on-error: true
+
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            suffix: windows-x86_64-legacy
+            rustflags: "-C target-cpu=core2"
+            linker: ""
+            pkgs: ""
+            continue-on-error: true
+
+          # Windows ARM64 平台（新增）
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            suffix: windows-arm64
+            rustflags: ""
+            linker: ""
             pkgs: ""
             continue-on-error: true
 
@@ -130,14 +161,14 @@ jobs:
           echo "utc_time=$UTC_TIME" >> $GITHUB_OUTPUT
           echo "beijing=$BEIJING_TIME" >> $GITHUB_OUTPUT
 
-      - name: Install cross compilation tools (non-loongarch)
-        if: matrix.pkgs != ''
+      - name: Install cross compilation tools (Linux only)
+        if: runner.os == 'Linux' && matrix.pkgs != ''
         run: |
           sudo apt update
           sudo apt install -y ${{ matrix.pkgs }}
 
-      - name: Download and extract LoongArch toolchain
-        if: matrix.target == 'loongarch64-unknown-linux-gnu'
+      - name: Download and extract LoongArch toolchain (Linux only)
+        if: runner.os == 'Linux' && matrix.target == 'loongarch64-unknown-linux-gnu'
         run: |
           DOWNLOAD_URL="https://github.com/loongson/build-tools/releases/download/2025.08.08/x86_64-cross-tools-loongarch64-binutils_2.45-gcc_15.1.0-glibc_2.42.tar.xz"
           FILENAME="loongarch64-toolchain.tar.xz"
@@ -171,8 +202,8 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Configure linker
-        if: matrix.linker != ''
+      - name: Configure linker (Linux only)
+        if: runner.os == 'Linux' && matrix.linker != ''
         run: |
           mkdir -p ~/.cargo
           if [ "${{ matrix.target }}" == "loongarch64-unknown-linux-gnu" ]; then
@@ -192,7 +223,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pumpkin-server-${{ matrix.suffix }}-${{ steps.datetime.outputs.utc_date }}
-          path: target/${{ matrix.target }}/release/pumpkin
+          path: target/${{ matrix.target }}/release/pumpkin${{ runner.os == 'Windows' && '.exe' || '' }}
 
   release:
     needs: [build, sync]
@@ -239,6 +270,9 @@ jobs:
             if [ -f "$dir/pumpkin" ]; then
               suffix=$(basename "$dir" | sed 's/^pumpkin-server-//')
               cp "$dir/pumpkin" "release_files/pumpkin-$suffix"
+            elif [ -f "$dir/pumpkin.exe" ]; then
+              suffix=$(basename "$dir" | sed 's/^pumpkin-server-//')
+              cp "$dir/pumpkin.exe" "release_files/pumpkin-$suffix.exe"
             fi
           done
           ls -la release_files
@@ -257,10 +291,13 @@ jobs:
             ----------------------------------------
 
             下载链接（在 Release 附件中）：
-            - `pumpkin-x86_64-${{ steps.timestamp.outputs.utc_date }}` – 标准 x86_64 构建
-            - `pumpkin-x86_64-legacy-${{ steps.timestamp.outputs.utc_date }}` – 为旧 CPU 优化 (target-cpu=core2)
-            - `pumpkin-aarch64-${{ steps.timestamp.outputs.utc_date }}` – ARM64 Linux 构建
-            - `pumpkin-loongarch64-${{ steps.timestamp.outputs.utc_date }}` – LoongArch64 Linux 构建（实验性）
+            - `pumpkin-linux-x86_64-${{ steps.timestamp.outputs.utc_date }}` – Linux x86_64 标准构建
+            - `pumpkin-linux-x86_64-legacy-${{ steps.timestamp.outputs.utc_date }}` – Linux x86_64 旧 CPU 优化
+            - `pumpkin-linux-aarch64-${{ steps.timestamp.outputs.utc_date }}` – Linux ARM64 构建
+            - `pumpkin-linux-loongarch64-${{ steps.timestamp.outputs.utc_date }}` – Linux LoongArch64 构建（实验性）
+            - `pumpkin-windows-x86_64-${{ steps.timestamp.outputs.utc_date }}.exe` – Windows x86_64 标准构建
+            - `pumpkin-windows-x86_64-legacy-${{ steps.timestamp.outputs.utc_date }}.exe` – Windows x86_64 旧 CPU 优化
+            - `pumpkin-windows-arm64-${{ steps.timestamp.outputs.utc_date }}.exe` – Windows ARM64 构建（实验性）
           artifacts: "release_files/*"
           allowUpdates: false
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -270,7 +307,6 @@ jobs:
         run: |
           KEEP=10
           echo "🧹 开始清理旧 Release 和对应的 Git tag，保留最近 ${KEEP} 个..."
-          # 修复 jq 表达式：正确提取 tag 名称列表
           gh release list --limit 100 --json tagName,createdAt --jq "sort_by(.createdAt) | reverse | .[${KEEP}:] | .[].tagName" | while read tag; do
             echo "🗑️ 删除 Release: $tag （同时删除对应的 Git tag）"
             gh release delete "$tag" --yes --cleanup-tag
