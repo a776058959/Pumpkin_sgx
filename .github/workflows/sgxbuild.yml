@@ -270,11 +270,12 @@ jobs:
         run: |
           KEEP=10
           echo "🧹 开始清理旧 Release 和对应的 Git tag，保留最近 ${KEEP} 个..."
-          gh release list --limit 100 --json tagName,createdAt --jq "sort_by(.createdAt) | reverse | .[${KEEP}:].tagName" | while read tag; do
+          # 修复 jq 表达式：正确提取 tag 名称列表
+          gh release list --limit 100 --json tagName,createdAt --jq "sort_by(.createdAt) | reverse | .[${KEEP}:] | .[].tagName" | while read tag; do
             echo "🗑️ 删除 Release: $tag （同时删除对应的 Git tag）"
             gh release delete "$tag" --yes --cleanup-tag
           done
           echo "✅ 清理完成。"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: a776058959/Pumpkin_sgx   # 修复：显式指定仓库
+          GH_REPO: a776058959/Pumpkin_sgx
