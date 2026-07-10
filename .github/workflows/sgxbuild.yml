@@ -151,8 +151,10 @@ jobs:
           persist-credentials: false
           submodules: true
 
+      # 设置日期（使用 Bash 以确保跨平台兼容）
       - name: Set build date and time
         id: datetime
+        shell: bash
         run: |
           UTC_DATE=$(date -u +'%Y%m%d')
           UTC_TIME=$(date -u +'%H%M')
@@ -214,7 +216,9 @@ jobs:
           echo "[target.${{ matrix.target }}]" >> ~/.cargo/config.toml
           echo "linker = \"$LINKER_PATH\"" >> ~/.cargo/config.toml
 
+      # 使用 Bash 运行 cargo 命令，确保环境变量 RUSTFLAGS 正确传递
       - name: Build
+        shell: bash
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
         run: cargo build --release --target ${{ matrix.target }}
