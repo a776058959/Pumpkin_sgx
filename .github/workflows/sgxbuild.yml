@@ -11,27 +11,31 @@ env:
 permissions: write-all
 
 jobs:
+  # 同步上游，判断是否有更新（操作 master 分支）
   sync:
     runs-on: ubuntu-latest
     outputs:
       has_updates: ${{ steps.check.outputs.has_updates }}
       commits_base64: ${{ steps.commits.outputs.commits_base64 }}
     steps:
+      # 检出 master 分支，使用 PAT 进行身份验证，并拉取子模块
       - name: Checkout master branch with PAT and submodules
         uses: actions/checkout@v4
         with:
-          ref: master
+          ref: master          # 关键：检出 master 分支
           fetch-depth: 0
           token: ${{ secrets.PAT }}
           persist-credentials: false
-          submodules: true
+          submodules: true      # 关键：拉取子模块（包含 wit 定义）
 
+      # 添加上游仓库并获取最新代码
       - name: Add upstream and fetch
         run: |
           git remote add upstream https://github.com/Pumpkin-MC/Pumpkin.git
           git fetch upstream
 
-      - name: Check for updates
+      # 检查上游是否有新提交
+      - name: Check for updates (from master)
         id: check
         run: |
           NEW_COMMITS_COUNT=$(git rev-list --count HEAD..upstream/master)
@@ -42,6 +46,7 @@ jobs:
             echo "has_updates=false" >> $GITHUB_OUTPUT
           fi
 
+      # 如果有更新，获取提交列表并进行 Base64 编码
       - name: Get upstream commits (if updates exist)
         id: commits
         if: steps.check.outputs.has_updates == 'true'
@@ -52,9 +57,11 @@ jobs:
           if [ -z "$COMMITS" ]; then
             COMMITS="（无详细提交信息，可能为合并提交）"
           fi
+          # Base64 编码
           ENCODED=$(echo "$COMMITS" | base64 -w 0)
           echo "commits_base64=$ENCODED" >> $GITHUB_OUTPUT
 
+      # 调试：确认 PAT 是否已正确设置
       - name: Debug PAT existence
         env:
           PAT: ${{ secrets.PAT }}
@@ -65,6 +72,7 @@ jobs:
             echo "❌ PAT 未设置或为空！"
           fi
 
+      # 合并上游更新到 master 分支并推送
       - name: Merge upstream changes into master
         if: steps.check.outputs.has_updates == 'true'
         env:
@@ -75,6 +83,7 @@ jobs:
           git merge upstream/master --no-edit --allow-unrelated-histories
           git push https://a776058959:$PAT@github.com/a776058959/Pumpkin_sgx.git master
 
+  # 编译（仅当有更新时运行，仍然使用 master 代码）
   build:
     needs: sync
     if: needs.sync.outputs.has_updates == 'true'
@@ -83,7 +92,7 @@ jobs:
     strategy:
       matrix:
         include:
-          # Linux 平台
+          # Linux x86_64 标准构建
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             suffix: linux-x86_64
@@ -92,6 +101,7 @@ jobs:
             pkgs: ""
             continue-on-error: false
 
+          # Linux x86_64 旧 CPU 优化构建
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             suffix: linux-x86_64-legacy
@@ -100,6 +110,7 @@ jobs:
             pkgs: ""
             continue-on-error: false
 
+          # Linux ARM64 构建（实验性，允许失败）
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             suffix: linux-aarch64
@@ -108,6 +119,7 @@ jobs:
             pkgs: "gcc-aarch64-linux-gnu"
             continue-on-error: true
 
+          # Linux LoongArch64 构建（实验性，允许失败）
           - os: ubuntu-latest
             target: loongarch64-unknown-linux-gnu
             suffix: linux-loongarch64
@@ -116,7 +128,7 @@ jobs:
             pkgs: ""
             continue-on-error: true
 
-          # Windows x86_64 平台
+          # Windows x86_64 标准构建（实验性，允许失败）
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             suffix: windows-x86_64
@@ -125,6 +137,7 @@ jobs:
             pkgs: ""
             continue-on-error: true
 
+          # Windows x86_64 旧 CPU 优化构建（实验性，允许失败）
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             suffix: windows-x86_64-legacy
@@ -133,7 +146,7 @@ jobs:
             pkgs: ""
             continue-on-error: true
 
-          # Windows ARM64 平台（新增）
+          # Windows ARM64 构建（实验性，允许失败）
           - os: windows-latest
             target: aarch64-pc-windows-msvc
             suffix: windows-arm64
@@ -143,13 +156,14 @@ jobs:
             continue-on-error: true
 
     steps:
+      # 检出 master 分支，使用 PAT 进行身份验证，并拉取子模块
       - name: Checkout master branch with PAT and submodules
         uses: actions/checkout@v4
         with:
-          ref: master
+          ref: master          # 关键：检出 master 分支
           token: ${{ secrets.PAT }}
           persist-credentials: false
-          submodules: true
+          submodules: true      # 关键：拉取子模块
 
       # 设置日期（使用 Bash 以确保跨平台兼容）
       - name: Set build date and time
@@ -163,12 +177,14 @@ jobs:
           echo "utc_time=$UTC_TIME" >> $GITHUB_OUTPUT
           echo "beijing=$BEIJING_TIME" >> $GITHUB_OUTPUT
 
+      # 安装交叉编译工具（仅 Linux 需要）
       - name: Install cross compilation tools (Linux only)
         if: runner.os == 'Linux' && matrix.pkgs != ''
         run: |
           sudo apt update
           sudo apt install -y ${{ matrix.pkgs }}
 
+      # 下载并解压 LoongArch 工具链（仅 Linux 需要）
       - name: Download and extract LoongArch toolchain (Linux only)
         if: runner.os == 'Linux' && matrix.target == 'loongarch64-unknown-linux-gnu'
         run: |
@@ -199,11 +215,13 @@ jobs:
             echo "⚠️ 未找到编译器 $COMPILER_NAME"
           fi
 
+      # 安装 Rust
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
+      # 配置链接器（仅 Linux 需要）
       - name: Configure linker (Linux only)
         if: runner.os == 'Linux' && matrix.linker != ''
         run: |
@@ -223,25 +241,30 @@ jobs:
           RUSTFLAGS: ${{ matrix.rustflags }}
         run: cargo build --release --target ${{ matrix.target }}
 
+      # 上传构建产物
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: pumpkin-server-${{ matrix.suffix }}-${{ steps.datetime.outputs.utc_date }}
           path: target/${{ matrix.target }}/release/pumpkin${{ runner.os == 'Windows' && '.exe' || '' }}
 
+  # 统一发布 Release（仅当有更新时运行）
   release:
     needs: [build, sync]
     if: needs.sync.outputs.has_updates == 'true'
     runs-on: ubuntu-latest
     steps:
+      # 下载所有构建产物
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
+      # 显示下载的文件结构
       - name: Display structure of downloaded files
         run: ls -R artifacts
 
+      # 解码上游提交信息
       - name: Decode upstream commits
         id: decode_commits
         run: |
@@ -257,6 +280,7 @@ jobs:
             echo "commits=" >> $GITHUB_OUTPUT
           fi
 
+      # 获取构建时间戳
       - name: Get build timestamp
         id: timestamp
         run: |
@@ -267,6 +291,7 @@ jobs:
           echo "utc_time=$UTC_TIME" >> $GITHUB_OUTPUT
           echo "beijing=$BEIJING_TIME" >> $GITHUB_OUTPUT
 
+      # 准备 Release 文件
       - name: Prepare release files
         run: |
           mkdir -p release_files
@@ -281,6 +306,7 @@ jobs:
           done
           ls -la release_files
 
+      # 创建 Release
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
@@ -306,12 +332,14 @@ jobs:
           allowUpdates: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      # 清理旧的 Release 和 Git tag（保留最近 10 个）
       - name: Clean up old releases and tags
         if: success()
         run: |
           KEEP=10
           echo "🧹 开始清理旧 Release 和对应的 Git tag，保留最近 ${KEEP} 个..."
-          gh release list --limit 100 --json tagName,createdAt --jq "sort_by(.createdAt) | reverse | .[${KEEP}:] | .[].tagName" | while read tag; do
+          # 使用 gh 命令获取所有 Release 的 tag 名称，按默认顺序（最新在前），取第 11 个及以后的 tag 进行删除
+          gh release list --limit 100 --json tagName --jq ".[${KEEP}:].tagName" | while read tag; do
             echo "🗑️ 删除 Release: $tag （同时删除对应的 Git tag）"
             gh release delete "$tag" --yes --cleanup-tag
           done
