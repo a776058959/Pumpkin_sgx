@@ -5,7 +5,12 @@ import android.content.Context;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
 import java.nio.charset.StandardCharsets;
+import java.util.Enumeration;
 
 /**
  * 持有 Pumpkin 原生进程的状态与输出。
@@ -95,8 +100,8 @@ public final class PumpkinServer {
             ProcessBuilder pb = new ProcessBuilder(bin.getAbsolutePath());
             pb.directory(workDir);
             pb.redirectErrorStream(true);
-            // 服务端在非 TTY 下会退化到简单控制台读取；接到 /dev/null 后读到 EOF 会安全退出该线程
-            pb.redirectInput(ProcessBuilder.Redirect.from(new File("/dev/null")));
+            // stdin 保持默认管道：服务端在非 TTY 下逐行读 stdin 当控制台命令，
+            // App 用 sendCommand() 往这个管道写命令（/op、/stop、/save-all 等）
             process = pb.start();
             running = true;
             exitCode = Integer.MIN_VALUE;
@@ -140,6 +145,59 @@ public final class PumpkinServer {
         }, "pumpkin-stdout");
         t.setDaemon(true);
         t.start();
+    }
+
+    /** 往服务端 stdin 发一条控制台命令。 */
+    public synchronized void sendCommand(String command) {
+        if (command == null) {
+            return;
+        }
+        String cmd = command.trim();
+        if (cmd.isEmpty()) {
+            return;
+        }
+        if (process == null || !running) {
+            appendLine("[app] 服务器未在运行，无法发送命令");
+            return;
+        }
+        try {
+            OutputStream os = process.getOutputStream();
+            os.write((cmd + "\n").getBytes(StandardCharsets.UTF_8));
+            os.flush();
+            appendLine("[app] > " + cmd);
+        } catch (IOException e) {
+            appendLine("[app] 发送命令失败: " + e);
+        }
+    }
+
+    /** 找一个可用的局域网 IPv4，用于提示客户端该连哪个地址。 */
+    public static String findLanIpv4() {
+        try {
+            Enumeration<NetworkInterface> ifaces = NetworkInterface.getNetworkInterfaces();
+            while (ifaces != null && ifaces.hasMoreElements()) {
+                NetworkInterface ni = ifaces.nextElement();
+                if (!ni.isUp() || ni.isLoopback()) {
+                    continue;
+                }
+                String name = ni.getName();
+                if (name != null && (name.startsWith("rmnet") || name.startsWith("dummy")
+                        || name.startsWith("p2p"))) {
+                    continue;
+                }
+                Enumeration<InetAddress> addrs = ni.getInetAddresses();
+                while (addrs.hasMoreElements()) {
+                    InetAddress addr = addrs.nextElement();
+                    if (addr instanceof Inet4Address
+                            && !addr.isLoopbackAddress()
+                            && addr.isSiteLocalAddress()) {
+                        return addr.getHostAddress();
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // 拿不到就返回 null，界面显示提示即可
+        }
+        return null;
     }
 
     public synchronized void stop() {

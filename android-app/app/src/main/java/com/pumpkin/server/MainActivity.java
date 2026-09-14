@@ -13,9 +13,11 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.text.InputType;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -32,6 +34,7 @@ public class MainActivity extends Activity {
     private TextView statusView;
     private TextView logView;
     private ScrollView scrollView;
+    private EditText commandInput;
 
     private final Runnable ticker = new Runnable() {
         @Override
@@ -95,6 +98,25 @@ public class MainActivity extends Activity {
         dir.setText("复制数据目录路径");
         root.addView(dir, matchWrap());
 
+        LinearLayout cmdRow = new LinearLayout(this);
+        cmdRow.setOrientation(LinearLayout.HORIZONTAL);
+        commandInput = new EditText(this);
+        commandInput.setHint("控制台命令：list / op 玩家名 / stop");
+        commandInput.setInputType(InputType.TYPE_CLASS_TEXT);
+        commandInput.setSingleLine(true);
+        cmdRow.addView(commandInput, weight());
+        Button send = new Button(this);
+        send.setText("发送");
+        cmdRow.addView(send);
+        root.addView(cmdRow, matchWrap());
+
+        send.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                sendCommandFromInput();
+            }
+        });
+
         scrollView = new ScrollView(this);
         logView = new TextView(this);
         logView.setTextSize(10);
@@ -153,7 +175,11 @@ public class MainActivity extends Activity {
         } else {
             state = "○ 未启动";
         }
-        statusView.setText(state + "\n" + dir);
+        String lan = PumpkinServer.findLanIpv4();
+        String connect = (lan == null)
+                ? "未检测到局域网 IP（确认已连上 WiFi）"
+                : "Java 连 " + lan + ":25565　|　基岩连 " + lan + ":19132";
+        statusView.setText(state + "\n目录: " + dir + "\n" + connect);
 
         String text = server.tailLog();
         if (!text.contentEquals(logView.getText())) {
@@ -182,6 +208,19 @@ public class MainActivity extends Activity {
         Intent intent = new Intent(this, ServerService.class);
         intent.setAction(ServerService.ACTION_STOP);
         startService(intent);
+    }
+
+    private void sendCommandFromInput() {
+        if (commandInput == null) {
+            return;
+        }
+        String cmd = commandInput.getText().toString();
+        if (cmd.trim().isEmpty()) {
+            return;
+        }
+        PumpkinServer.get().sendCommand(cmd);
+        commandInput.setText("");
+        refresh();
     }
 
     private void copyWorkDir() {
