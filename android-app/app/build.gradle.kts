@@ -26,9 +26,24 @@ android {
         }
     }
 
+    // 固定签名：用仓库里的 key，保证每次构建签名一致，安装新版能直接覆盖升级、不丢世界数据。
+    // 注意：这是自签名测试密钥，密码是公开的，仅用于自己侧载，不要用于任何正式分发。
+    signingConfigs {
+        create("fixed") {
+            storeFile = file("pumpkin-signing.p12")
+            storePassword = "pumpkin123"
+            keyAlias = "pumpkin"
+            keyPassword = "pumpkin123"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("fixed")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("fixed")
         }
     }
 
