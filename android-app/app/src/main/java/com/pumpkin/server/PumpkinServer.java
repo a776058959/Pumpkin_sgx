@@ -75,9 +75,12 @@ public final class PumpkinServer {
             return;
         }
 
-        workDir = context.getFilesDir();
+        // 优先用应用专属外部目录：插 USB / 系统文件管理器就能访问 Android/data/<包名>/files，
+        // 方便改配置和放世界存档；不可用时退回内部私有目录。
+        File external = context.getExternalFilesDir(null);
+        workDir = (external != null) ? external : context.getFilesDir();
         if (workDir == null) {
-            appendLine("[app] filesDir 不可用");
+            appendLine("[app] 找不到可写目录");
             return;
         }
         if (!workDir.isDirectory() && !workDir.mkdirs()) {

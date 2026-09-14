@@ -21,6 +21,8 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
+
 /** 极简控制界面：启动/停止服务端，查看控制台输出。 */
 public class MainActivity extends Activity {
 
@@ -141,9 +143,7 @@ public class MainActivity extends Activity {
     private void refresh() {
         PumpkinServer server = PumpkinServer.get();
         boolean running = server.isRunning();
-        String dir = server.getWorkDir() == null
-                ? getFilesDir().getAbsolutePath()
-                : server.getWorkDir().getAbsolutePath();
+        String dir = currentWorkDir();
         String state;
         if (running) {
             long secs = Math.max(0, (System.currentTimeMillis() - server.getStartedAt()) / 1000);
@@ -194,6 +194,15 @@ public class MainActivity extends Activity {
             cm.setPrimaryClip(ClipData.newPlainText("pumpkin dir", dir));
             Toast.makeText(this, "已复制: " + dir, Toast.LENGTH_LONG).show();
         }
+    }
+
+    private String currentWorkDir() {
+        PumpkinServer server = PumpkinServer.get();
+        if (server.getWorkDir() != null) {
+            return server.getWorkDir().getAbsolutePath();
+        }
+        File external = getExternalFilesDir(null);
+        return external != null ? external.getAbsolutePath() : getFilesDir().getAbsolutePath();
     }
 
     private void openBatterySettings() {
