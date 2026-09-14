@@ -2,8 +2,13 @@ name: Sync and Build Pumpkin (Multi-Platform)
 
 on:
   workflow_dispatch:
+    inputs:
+      force:
+        description: '即使上游没有新提交也强制构建'
+        type: boolean
+        default: false
   schedule:
-    - cron: '0 */2 * * *'   # 每 2 小时运行一次（UTC 时间）
+    - cron: '0 */2 * * *'   # 每 2 小时检查一次；只有上游有新提交时才真正构建
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # 强制使用 Node.js 24，消除弃用警告
@@ -11,82 +16,62 @@ env:
 permissions: write-all
 
 jobs:
-  # 同步上游，判断是否有更新（操作 master 分支）
-  sync:
+  # 只检查上游有没有新提交：比较 commit SHA，不把上游代码同步/合并进本仓库
+  check:
     runs-on: ubuntu-latest
     outputs:
-      has_updates: ${{ steps.check.outputs.has_updates }}
-      commits_base64: ${{ steps.commits.outputs.commits_base64 }}
+      sha: ${{ steps.cmp.outputs.sha }}
+      short: ${{ steps.cmp.outputs.short }}
+      changed: ${{ steps.cmp.outputs.changed }}
+      commits_base64: ${{ steps.cmp.outputs.commits_base64 }}
     steps:
-      # 检出 master 分支，使用 PAT 进行身份验证，并拉取子模块
-      - name: Checkout master branch with PAT and submodules
+      - name: Checkout own repo (for the upstream lock file)
         uses: actions/checkout@v4
         with:
-          ref: master          # 关键：检出 master 分支
-          fetch-depth: 0
+          ref: ci
           token: ${{ secrets.PAT }}
           persist-credentials: false
-          submodules: true      # 关键：拉取子模块（包含 wit 定义）
 
-      # 添加上游仓库并获取最新代码
-      - name: Add upstream and fetch
-        run: |
-          git remote add upstream https://github.com/Pumpkin-MC/Pumpkin.git
-          git fetch upstream
-
-      # 检查上游是否有新提交
-      - name: Check for updates (from master)
-        id: check
-        run: |
-          NEW_COMMITS_COUNT=$(git rev-list --count HEAD..upstream/master)
-          echo "📊 上游新提交数量: $NEW_COMMITS_COUNT"
-          if [ "$NEW_COMMITS_COUNT" -gt 0 ]; then
-            echo "has_updates=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_updates=false" >> $GITHUB_OUTPUT
-          fi
-
-      # 如果有更新，获取提交列表并进行 Base64 编码
-      - name: Get upstream commits (if updates exist)
-        id: commits
-        if: steps.check.outputs.has_updates == 'true'
-        run: |
-          COMMITS=$(git log --pretty=format:"- %s (%h)" HEAD..upstream/master)
-          echo "📝 从 git log 获取到的提交列表："
-          echo "$COMMITS"
-          if [ -z "$COMMITS" ]; then
-            COMMITS="（无详细提交信息，可能为合并提交）"
-          fi
-          # Base64 编码
-          ENCODED=$(echo "$COMMITS" | base64 -w 0)
-          echo "commits_base64=$ENCODED" >> $GITHUB_OUTPUT
-
-      # 调试：确认 PAT 是否已正确设置
-      - name: Debug PAT existence
+      - name: Compare upstream HEAD with last built commit
+        id: cmp
+        shell: bash
         env:
-          PAT: ${{ secrets.PAT }}
+          GH_TOKEN: ${{ secrets.PAT }}
         run: |
-          if [ -n "$PAT" ]; then
-            echo "✅ PAT 已设置，长度为 ${#PAT}"
+          SHA=$(git ls-remote https://github.com/Pumpkin-MC/Pumpkin.git refs/heads/master | cut -f1)
+          if [ -z "$SHA" ]; then echo "❌ 读取上游 HEAD 失败"; exit 1; fi
+          if [ -f .github/upstream-lock.txt ]; then
+            LOCKED=$(tr -d '[:space:]' < .github/upstream-lock.txt)
           else
-            echo "❌ PAT 未设置或为空！"
+            LOCKED=""
+          fi
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+          echo "short=${SHA:0:8}" >> $GITHUB_OUTPUT
+          echo "上游当前 HEAD: $SHA"
+          echo "上次构建的提交: ${LOCKED:-（无记录，将执行首次构建）}"
+          if [ "$SHA" = "$LOCKED" ]; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "commits_base64=" >> $GITHUB_OUTPUT
+            echo "✅ 上游没有新提交，跳过构建"
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "🚀 上游有新提交，准备构建"
+            if [ -n "$LOCKED" ]; then
+              COMMITS=$(gh api "repos/Pumpkin-MC/Pumpkin/compare/$LOCKED...$SHA" \
+                --jq '.commits[] | "- \(.commit.message | split("\n")[0]) (\(.sha[0:7]))"' 2>/dev/null | head -60 || true)
+            else
+              COMMITS="（首次构建，无对比基线）"
+            fi
+            if [ -z "$COMMITS" ]; then COMMITS="（未能获取提交列表）"; fi
+            echo "📝 新增提交："
+            echo "$COMMITS"
+            echo "commits_base64=$(printf '%s' "$COMMITS" | base64 -w0)" >> $GITHUB_OUTPUT
           fi
 
-      # 合并上游更新到 master 分支并推送
-      - name: Merge upstream changes into master
-        if: steps.check.outputs.has_updates == 'true'
-        env:
-          PAT: ${{ secrets.PAT }}
-        run: |
-          git config --global user.email "actions@github.com"
-          git config --global user.name "GitHub Actions"
-          git merge upstream/master --no-edit --allow-unrelated-histories
-          git push https://a776058959:$PAT@github.com/a776058959/Pumpkin_sgx.git master
-
-  # 编译（仅当有更新时运行，仍然使用 master 代码）
+  # 编译（仅当上游有新提交时运行，代码直接来自上游仓库）
   build:
-    needs: sync
-    if: needs.sync.outputs.has_updates == 'true'
+    needs: check
+    if: needs.check.outputs.changed == 'true' || github.event.inputs.force == 'true'
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.continue-on-error }}
     strategy:
@@ -156,14 +141,24 @@ jobs:
             continue-on-error: true
 
     steps:
-      # 检出 master 分支，使用 PAT 进行身份验证，并拉取子模块
-      - name: Checkout master branch with PAT and submodules
+      # 只检出本仓库（上游源码在下一步单独拉，不再往本仓库同步）
+      - name: Checkout own repo
         uses: actions/checkout@v4
         with:
-          ref: master          # 关键：检出 master 分支
+          ref: ci
           token: ${{ secrets.PAT }}
           persist-credentials: false
-          submodules: true      # 关键：拉取子模块
+
+      # 按 check job 确定的提交，拉取上游源码到 src/ 目录
+      - name: Fetch upstream source at pinned commit
+        shell: bash
+        run: |
+          git init -q src
+          cd src
+          git remote add origin https://github.com/Pumpkin-MC/Pumpkin.git
+          git fetch -q --depth=1 origin "${{ needs.check.outputs.sha }}"
+          git checkout -q FETCH_HEAD
+          echo "📦 上游提交: $(git log -1 --format='%h %s')"
 
       # 设置日期（使用 Bash 以确保跨平台兼容）
       - name: Set build date and time
@@ -237,6 +232,7 @@ jobs:
       # 使用 Bash 运行 cargo 命令，确保环境变量 RUSTFLAGS 正确传递
       - name: Build
         shell: bash
+        working-directory: src
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
         run: cargo build --release --target ${{ matrix.target }}
@@ -246,26 +242,36 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pumpkin-server-${{ matrix.suffix }}-${{ steps.datetime.outputs.utc_date }}
-          path: target/${{ matrix.target }}/release/pumpkin${{ runner.os == 'Windows' && '.exe' || '' }}
+          path: src/target/${{ matrix.target }}/release/pumpkin${{ runner.os == 'Windows' && '.exe' || '' }}
 
   # Android ARM64 构建（aarch64-linux-android，Termux 可运行），实验性允许失败。
   build-android:
-    needs: sync
-    if: needs.sync.outputs.has_updates == 'true'
+    needs: check
+    if: needs.check.outputs.changed == 'true' || github.event.inputs.force == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true
     env:
       ANDROID_API: "24"
 
     steps:
-      # 检出 master 分支，使用 PAT 进行身份验证，并拉取子模块
-      - name: Checkout master branch with PAT and submodules
+      # 只检出本仓库（上游源码在下一步单独拉，不再往本仓库同步）
+      - name: Checkout own repo
         uses: actions/checkout@v4
         with:
-          ref: master          # 关键：检出 master 分支
+          ref: ci
           token: ${{ secrets.PAT }}
           persist-credentials: false
-          submodules: true      # 关键：拉取子模块
+
+      # 按 check job 确定的提交，拉取上游源码到 src/ 目录
+      - name: Fetch upstream source at pinned commit
+        shell: bash
+        run: |
+          git init -q src
+          cd src
+          git remote add origin https://github.com/Pumpkin-MC/Pumpkin.git
+          git fetch -q --depth=1 origin "${{ needs.check.outputs.sha }}"
+          git checkout -q FETCH_HEAD
+          echo "📦 上游提交: $(git log -1 --format='%h %s')"
 
       - name: Set build date
         id: datetime
@@ -295,6 +301,7 @@ jobs:
       # 交叉编译到 aarch64-linux-android（ring / lz4 等 C 依赖由 NDK clang 编译）
       - name: Build for Android arm64
         shell: bash
+        working-directory: src
         run: |
           NDK="${{ steps.ndk.outputs.ndk }}"
           TOOLCHAIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
@@ -316,7 +323,7 @@ jobs:
         run: |
           NDK="${{ steps.ndk.outputs.ndk }}"
           BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          F=target/aarch64-linux-android/release/pumpkin
+          F=src/target/aarch64-linux-android/release/pumpkin
           ls -lh "$F"
           file "$F" || true
           "$BIN/llvm-readelf" -h "$F" | head -12 || true
@@ -327,12 +334,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pumpkin-server-android-arm64-${{ steps.datetime.outputs.utc_date }}
-          path: target/aarch64-linux-android/release/pumpkin
+          path: src/target/aarch64-linux-android/release/pumpkin
 
   # 把 Android 原生二进制包装成可直接安装的 APK（无需 Termux）
   build-android-apk:
-    needs: [build-android, sync]
-    if: needs.sync.outputs.has_updates == 'true'
+    needs: [build-android, check]
+    if: needs.check.outputs.changed == 'true' || github.event.inputs.force == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true
 
@@ -397,8 +404,8 @@ jobs:
 
   # 统一发布 Release（仅当有更新时运行）
   release:
-    needs: [build, build-android, build-android-apk, sync]
-    if: needs.sync.outputs.has_updates == 'true'
+    needs: [build, build-android, build-android-apk, check]
+    if: needs.check.outputs.changed == 'true' || github.event.inputs.force == 'true'
     runs-on: ubuntu-latest
     steps:
       # 下载所有构建产物
@@ -415,7 +422,7 @@ jobs:
       - name: Decode upstream commits
         id: decode_commits
         run: |
-          ENCODED="${{ needs.sync.outputs.commits_base64 }}"
+          ENCODED="${{ needs.check.outputs.commits_base64 }}"
           if [ -n "$ENCODED" ]; then
             DECODED=$(echo "$ENCODED" | base64 -d)
             echo "📌 解码后的提交列表："
@@ -462,7 +469,7 @@ jobs:
           tag: Custom-${{ steps.timestamp.outputs.utc_date }}-${{ steps.timestamp.outputs.utc_time }}
           name: Custom Build ${{ steps.timestamp.outputs.utc_date }}-${{ steps.timestamp.outputs.utc_time }}
           body: |
-            自动构建，上游提交：${{ github.sha }}
+            自动构建，上游提交：${{ needs.check.outputs.sha }}
             构建时间：${{ steps.timestamp.outputs.beijing }} UTC+8
 
             ----------------------------------------
@@ -498,3 +505,35 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: a776058959/Pumpkin_sgx
+
+  # 构建成功后，把「这次构建基于上游哪个提交」写进 .github/upstream-lock.txt。
+  # 这就是下次定时检查判断「有没有变化」的唯一依据——不需要同步上游代码本身。
+  record:
+    needs: [check, build]
+    if: needs.check.outputs.changed == 'true' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout own repo
+        uses: actions/checkout@v4
+        with:
+          ref: ci
+          token: ${{ secrets.PAT }}
+          persist-credentials: false
+
+      - name: Update upstream lock file
+        shell: bash
+        env:
+          SHA: ${{ needs.check.outputs.sha }}
+        run: |
+          mkdir -p .github
+          printf '%s\n' "$SHA" > .github/upstream-lock.txt
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          git add .github/upstream-lock.txt
+          if git diff --cached --quiet; then
+            echo "✅ lock 内容未变化，无需提交"
+          else
+            git commit -m "chore(ci): upstream ${SHA:0:8} built successfully [skip ci]"
+            git push origin HEAD:ci
+            echo "✅ 已记录上游提交 ${SHA:0:8}"
+          fi
